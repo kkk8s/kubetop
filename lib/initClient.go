@@ -36,6 +36,6 @@ func NewClient() *Clients {
 
 func CheckError(err error) {
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln(err.Error())
 	}
 }

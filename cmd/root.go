@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"log"
 	"os"
 
 	"github.com/olekukonko/tablewriter"
@@ -43,21 +44,23 @@ func Execute() error {
 }
 
 func Results(namespace string) {
+	if !lib.Validate(namespace) {
+		log.Fatalln("No such namespace")
+	}
 	PodsResource := lib.ParserCommonResouce(namespace)
 	PodsMetric := lib.ParserMetricsResouce(namespace)
-
-	Results := make([][]string, 2048)
-	for _, podResource := range PodsResource {
-		for _, podMetric := range PodsMetric {
-			if podMetric.PodName == podResource.PodName && podMetric.Namespace == podResource.Namespace {
-				result := []string{podResource.Namespace, podResource.NodeName, podResource.PodName, podResource.CPUTotalRequests, podMetric.CPUUsage, podResource.CPUTotalLimits, podResource.MemTotalRequest, podMetric.MemUsage, podResource.MemTotalLimits}
-				Results = append(Results, result)
-			}
+	
+	results := make([][]string, 2048)
+	for key,podResource := range PodsResource {
+		if podUsage,ok := PodsMetric[key];ok {
+			result := []string{podResource.NodeName, podResource.PodName, podResource.CPUTotalRequests, podUsage.CPUUsage, podResource.CPUTotalLimits, podResource.MemTotalRequest, podUsage.MemUsage, podResource.MemTotalLimits}
+			results = append(results,result)
 		}
 	}
+
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"名称空间", "运行节点", "pod名", "cpu申请(m)", "cpu实际用量(m)", "cpu限额(m)", "内存申请(MiB)", "内存实际用量(MiB)", "内存限额(MiB)"})
-	table.AppendBulk(Results)
+	table.SetHeader([]string{"运行节点", "pod名称", "cpu申请(m)", "cpu实际用量(m)", "cpu限额(m)", "内存申请(MiB)", "内存实际用量(MiB)", "内存限额(MiB)"})
+	table.AppendBulk(results)
 	table.SetAlignment(tablewriter.ALIGN_CENTER)
 	table.Render()
 }
