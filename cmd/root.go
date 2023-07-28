@@ -15,7 +15,7 @@ var (
 	(资源申请与限额仅计算Containers，initContainers不作计算)
 	`
 	kubetopExample = `
-	# 展示 kube-system 命名空间下资源申请量与使用量
+	# 1. 展示 kube-system 命名空间下资源申请量与使用量
 	kubetop -n kube-system
 	`
 	namespace string
@@ -32,8 +32,9 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-func init() {
+func init(){
 	rootCmd.Flags().StringVarP(&namespace, "namespace", "n", namespace, "指定名称空间")
+	rootCmd.MarkFlagRequired("namespace")
 	rootCmd.AddCommand(versionCmd)
 }
 
@@ -44,7 +45,7 @@ func Execute() error {
 func Results(namespace string) {
 	PodsResource := lib.ParserCommonResouce(namespace)
 	PodsMetric := lib.ParserMetricsResouce(namespace)
-	
+
 	Results := make([][]string, 2048)
 	for _, podResource := range PodsResource {
 		for _, podMetric := range PodsMetric {
