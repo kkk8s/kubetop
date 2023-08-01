@@ -8,30 +8,32 @@ import (
 	metrics "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
+var (
+	k8sClient *kubernetes.Clientset
+	metricsClient *metrics.Clientset
+)
 
-type Clients struct {
-	K8sClient *kubernetes.Clientset
-	MetricsClient *metrics.Clientset
-}
-
-func NewClient() *Clients {
+func init() {
 	//生成config配置
 	config, err := clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
 	CheckError(err)
 
 	//metrics-client
-	metricsClient, err := metrics.NewForConfig(config)
+	metricsClient, err = metrics.NewForConfig(config)
 	CheckError(err)
 
 
 	//common-client
-	commonClient, err := kubernetes.NewForConfig(config)
+	k8sClient, err = kubernetes.NewForConfig(config)
 	CheckError(err)
+}
 
-	return &Clients {
-		K8sClient: commonClient,
-		MetricsClient: metricsClient,
-	}
+func GetK8sClient() *kubernetes.Clientset {
+	return k8sClient
+}
+
+func GetMetricsClient() *metrics.Clientset {
+	return metricsClient
 }
 
 func CheckError(err error) {

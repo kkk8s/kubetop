@@ -5,10 +5,11 @@ import (
 	"os"
 
 	"metrics.k8s.io/cmd"
+	_ "metrics.k8s.io/lib"
 )
 
-func main(){
-	if err := cmd.Execute();err != nil {
+func main() {
+	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
