@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"context"
+	"time"
+
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +21,7 @@ var (
 	kubetop node
 	`
 	namespace string
+	sortBy    string
 )
 
 var rootCmd = &cobra.Command{
@@ -31,6 +35,15 @@ func init() {
 	rootCmd.AddCommand(podCmd)
 	rootCmd.AddCommand(nodeCmd)
 	rootCmd.AddCommand(versionCmd)
+
+	// 为 podCmd 添加 -n 或 --namespace 选项
+	podCmd.Flags().StringVarP(&namespace, "namespace", "n", "", "指定查询的命名空间")
+
+	// 为nodeCmd添加--sort选项
+	nodeCmd.Flags().StringVar(&sortBy, "sort-by", "cpu", "使用剩余CPU或者剩余内存进行排序")
+
+	timeout = time.Second * 5 // 全局超时时间
+	ctx, cancel = context.WithTimeout(context.Background(), timeout)
 }
 
 func Execute() error {

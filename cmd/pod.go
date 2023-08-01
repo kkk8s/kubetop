@@ -17,9 +17,9 @@ import (
 
 // 定义单个pod要采集的资源
 type ResourceStruct struct {
-	NodeName         string // Pod所在的节点
-	Namespace        string
-	PodName          string
+	NodeName    string // Pod所在的节点
+	Namespace   string
+	PodName     string
 	CPURequests string
 	CPULimits   string
 	MemRequest  string
@@ -48,7 +48,7 @@ var (
 	podCPUUsage int64
 	podMemUsage int64
 
-	ctx context.Context
+	ctx    context.Context
 	cancel context.CancelFunc
 
 	timeout time.Duration
@@ -68,15 +68,9 @@ var podCmd = &cobra.Command{
 		}
 		return nil
 	},
+	Aliases: []string{"po", "pods"},
 }
 
-func init() {
-	// 为 podCmd 添加 -n 或 --namespace 选项
-	podCmd.Flags().StringVarP(&namespace, "namespace", "n", "", "The namespace to query")
-	timeout = time.Second * 3  // 超时设置为3s
-	ctx, cancel = context.WithTimeout(context.Background(), timeout)	
-}
-	
 func Validate(namespace string) bool {
 	namespaces, err := lib.GetK8sClient().CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -113,9 +107,9 @@ func ParserCommonResouce(namespace string) ClientsetMap {
 			memLimits += pod.Spec.Containers[i].Resources.Limits.Memory().Value() / 1024 / 1024
 		}
 		podResource := ResourceStruct{
-			PodName:          pod.Name,
-			NodeName:         pod.Spec.NodeName,
-			Namespace:        namespace,
+			PodName:     pod.Name,
+			NodeName:    pod.Spec.NodeName,
+			Namespace:   namespace,
 			CPURequests: formatValue(cpuRequests),
 			CPULimits:   formatValue(cpuLimits),
 			MemRequest:  formatValue(memRequest),
@@ -180,7 +174,6 @@ func Results(namespace string) {
 	table.SetAlignment(tablewriter.ALIGN_CENTER)
 	table.Render()
 }
-
 
 func formatValue(val int64) string {
 	if val == 0 {
