@@ -10,15 +10,20 @@ import (
 var (
 	kubetopLong = `
 	1. 展示pod资源申请与实际值的差异(资源申请与限额仅计算Containers，initContainers不作计算)
-	2. 展示node节点的资源剩余百分比
+	2. 展示node节点的资源剩余百分比并排序
 	`
 	kubetopExample = `
-	# 1. 展示 kube-system 命名空间下资源申请量与使用量
-	kubetop pod -n [namespace]
-	eg: kubetop pod -n kube-system
+	# 1. 展示 kube-system 命名空间下资源量并按照pod实际cpu使用量/申请值的百分比进行排序
+	kubetop pod -n kube-system --sort-by=cpu
 
-	# 2. 展示node节点资源申请值剩余情况
-	kubetop node
+	# 2. 展示 kube-system 命名空间下资源量并按照pod实际内存使用量/申请值的百分比进行排序
+	kubetop pod -n kube-system --sort-by=mem
+
+	# 3. 展示node节点资源剩余情况并按照cpu排序(默认行为)
+	kubetop node --sort-by=cpu
+
+	# 4. 展示node节点资源剩余情况并按照内存排序
+	kubetop node --sort-by=mem
 	`
 	namespace string
 	sortBy    string
@@ -38,6 +43,7 @@ func init() {
 
 	// 为 podCmd 添加 -n 或 --namespace 选项
 	podCmd.Flags().StringVarP(&namespace, "namespace", "n", "", "指定查询的命名空间")
+	podCmd.Flags().StringVar(&sortBy, "sort-by", "cpu", "使用CPU剩余率或者内存剩余率进行排序")
 
 	// 为nodeCmd添加--sort选项
 	nodeCmd.Flags().StringVar(&sortBy, "sort-by", "cpu", "使用剩余CPU或者剩余内存进行排序")

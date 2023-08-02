@@ -21,6 +21,8 @@ var (
 	// 互斥锁用于保证并发安全
 	mutex sync.Mutex
 	wg sync.WaitGroup
+
+	watermark float64 = 20.0    // 内存及CPU阈值
 )
 
 var nodeCmd = &cobra.Command{
@@ -145,11 +147,13 @@ func GetNodeResource() {
 			strconv.FormatInt(nodeInfo.CPUTotal, 10),
 			strconv.FormatInt(nodeInfo.CPUAllocated, 10),
 			strconv.FormatInt(nodeInfo.CPURemaining, 10),
-			fmt.Sprintf("%.2f%%",nodeInfo.CPUPercentage),
+			// fmt.Sprintf("%.2f%%",nodeInfo.CPUPercentage),
+			colorize(nodeInfo.CPUPercentage),
 			strconv.FormatInt(nodeInfo.MemoryTotal, 10),
 			strconv.FormatInt(nodeInfo.MemoryAllocated, 10),
 			strconv.FormatInt(nodeInfo.MemoryRemaining, 10),
-			fmt.Sprintf("%.2f%%",nodeInfo.MemoryPercentage),
+			// fmt.Sprintf("%.2f%%",nodeInfo.MemoryPercentage),
+			colorize(nodeInfo.MemoryPercentage),
 		}
 		nodeResults = append(nodeResults,result)
 	}
@@ -198,6 +202,12 @@ func calculateRemainingResource(request, allocated int64) int64 {
 	return remaining
 }
 
+func colorize(percentage float64) string {
+	if percentage < watermark {
+		return fmt.Sprintf("\x1b[31m%.2f%%\x1b[0m", percentage)
+	}
+	return fmt.Sprintf("%.2f%%", percentage)
+}
 func handlerError(err error) {
 	if err != nil {
 		log.Fatalln(err.Error())
