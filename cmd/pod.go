@@ -37,16 +37,10 @@ type podMetric struct {
 }
 
 type podInfo struct {
-	NodeName           string
-	PodName            string
-	CPURequests        int64
-	CPUUsage           int64
-	CPULimits          int64
+	podResource
+	podMetric
 	CPUUsagePercentage float64
-	MemRequest         int64
-	MemUsage           int64
 	MemUsagePercentage float64
-	MemLimits          int64
 }
 
 var (
@@ -68,37 +62,10 @@ var podCmd = &cobra.Command{
 	Use:   "pod",
 	Short: "Print the usage of pod in namespace",
 	Run: func(cmd *cobra.Command, args []string) {
-		namespace, _ := cmd.Flags().GetString("namespace")
 		Results(namespace)
 	},
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		namespace, _ := cmd.Flags().GetString("namespace")
-		if namespace == "" {
-			return fmt.Errorf("namespace is required, use -n or --namespace to specify the namespace")
-		}
-		return nil
-	},
+	Args: cobra.NoArgs,
 	Aliases: []string{"po", "pods"},
-}
-
-// 判断是否存在指定的namespace
-func Validate(namespace string) bool {
-	namespaces, err := lib.GetK8sClient().CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Println("List namespaces timed out:", err.Error())
-			os.Exit(1)
-		}
-		log.Fatalln("Error listing namespaces:", err.Error())
-		os.Exit(1)
-	}
-
-	for _, ns := range namespaces.Items {
-		if ns.Name == namespace {
-			return true
-		}
-	}
-	return false
 }
 
 func ParserCommonResouce(namespace string) map[string]podResource {
@@ -162,26 +129,30 @@ func ParserMetricsResouce(namespace string) map[string]podMetric {
 func Results(namespace string) {
 	defer cancel()
 	if !Validate(namespace) {
-		log.Fatalln("指定的命名空间不存在")
+		fmt.Println("指定的命名空间不存在")
+		os.Exit(1)
 	}
 	PodsResource := ParserCommonResouce(namespace)
 	PodsMetric := ParserMetricsResouce(namespace)
 
 	var podInfoList []podInfo
-
-	for key, podResource := range PodsResource {
-		if podUsage, ok := PodsMetric[key]; ok {
+	for key, pr := range PodsResource {
+		if pu, ok := PodsMetric[key]; ok {
 			result := podInfo{
-				podResource.NodeName,
-				podResource.PodName,
-				podResource.CPURequests,
-				podUsage.CPUUsage,
-				podResource.CPULimits,
-				calculatePodUsagePercentage(podResource.CPURequests, podUsage.CPUUsage),
-				podResource.MemRequest,
-				podUsage.MemUsage,
-				calculatePodUsagePercentage(podResource.MemRequest, podUsage.MemUsage),
-				podResource.MemLimits,
+				podResource: podResource{
+					NodeName:    pr.NodeName,
+					PodName:     pr.PodName,
+					CPURequests: pr.CPURequests,
+					CPULimits:   pr.CPULimits,
+					MemRequest:  pr.MemRequest,
+					MemLimits:   pr.MemLimits,
+				},
+				podMetric: podMetric{
+					CPUUsage: pu.CPUUsage,
+					MemUsage: pu.MemUsage,
+				},
+				CPUUsagePercentage: calculatePodUsagePercentage(pr.CPURequests, pu.CPUUsage),
+				MemUsagePercentage: calculatePodUsagePercentage(pr.MemRequest, pu.MemUsage),
 			}
 			podInfoList = append(podInfoList, result)
 		}
@@ -207,7 +178,7 @@ func Results(namespace string) {
 	for _, podInfo := range podInfoList {
 		result := []string{
 			podInfo.NodeName,
-			podInfo.PodName,
+			podInfo.podResource.NodeName,
 			formatValue(podInfo.CPURequests),
 			formatValue(podInfo.CPUUsage),
 			formatValue(podInfo.CPUUsagePercentage),
@@ -221,9 +192,9 @@ func Results(namespace string) {
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
+
 	table.SetHeader([]string{"运行节点", "pod名称", "cpu-request(m)", "cpu用量(m)", "cpu用量/request占比", "cpu-limits(m)", "内存-request(MiB)", "内存用量(MiB)", "内存用量/request占比", "内存-limits(MiB)"})
 	table.AppendBulk(podResults)
-	table.SetAlignment(tablewriter.ALIGN_CENTER)
 	table.Render()
 }
 
@@ -256,4 +227,25 @@ func calculatePodUsagePercentage(request, usage int64) float64 {
 
 	percentage := float64(usage) / float64(request) * 100
 	return percentage
+}
+
+
+// 判断是否存在指定的namespace
+func Validate(namespace string) bool {
+	namespaces, err := lib.GetK8sClient().CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Println("List namespaces timed out:", err.Error())
+			os.Exit(1)
+		}
+		log.Fatalln("Error listing namespaces:", err.Error())
+		os.Exit(1)
+	}
+
+	for _, ns := range namespaces.Items {
+		if ns.Name == namespace {
+			return true
+		}
+	}
+	return false
 }
