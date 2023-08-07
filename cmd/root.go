@@ -26,14 +26,18 @@ var (
 	kubetop node --sort-by=mem
 	`
 	namespace string
-	sortBy    string
+	podSortBy string
+	nodeSortBy string
+	podSortByContainer bool
 )
 
 var rootCmd = &cobra.Command{
-	DisableFlagParsing: true,
+	// DisableFlagParsing: false,
 	Short:              "k8s资源查看工具",
 	Long:               kubetopLong,
 	Example:            kubetopExample,
+	DisableAutoGenTag: true,
+	DisableFlagsInUseLine: true,
 }
 
 func init() {
@@ -41,12 +45,19 @@ func init() {
 	rootCmd.AddCommand(nodeCmd)
 	rootCmd.AddCommand(versionCmd)
 
+	// 隐藏help子命令
+	rootCmd.SetHelpCommand(&cobra.Command{
+		Hidden: true,
+	})
+
 	// 为 podCmd 添加 -n 或 --namespace 选项
 	podCmd.Flags().StringVarP(&namespace, "namespace", "n", "", "指定查询的命名空间")
-	podCmd.Flags().StringVar(&sortBy, "sort-by", "cpu", "使用CPU剩余率或者内存剩余率进行排序")
+	podCmd.MarkFlagRequired("namespace")
+	podCmd.Flags().StringVar(&podSortBy, "sort-by", "cpu.request", "按CPU剩余率(cpu)/内存剩余率(mem)/节点名(node)/pod名(pod)进行排序")
+	podCmd.Flags().BoolVarP(&podSortByContainer, "container", "c", false, "Sort by container-level resources")
 
 	// 为nodeCmd添加--sort选项
-	nodeCmd.Flags().StringVar(&sortBy, "sort-by", "cpu", "使用剩余CPU或者剩余内存进行排序")
+	nodeCmd.Flags().StringVar(&nodeSortBy, "sort-by", "cpu", "使用CPU或内存剩余率排序")
 
 	timeout = time.Second * 5 // 全局超时时间
 	ctx, cancel = context.WithTimeout(context.Background(), timeout)

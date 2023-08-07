@@ -11,18 +11,16 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"metrics.k8s.io/lib"
 )
 
 var (
-	cpuRequest, cpuAllocated, memoryRequest, memoryAllocated resource.Quantity
 	// 互斥锁用于保证并发安全
 	mutex sync.Mutex
-	wg sync.WaitGroup
+	wg    sync.WaitGroup
 
-	watermark float64 = 20.0    // 内存及CPU阈值
+	watermark float64 = 20.0 // 内存及CPU阈值
 )
 
 var nodeCmd = &cobra.Command{
@@ -31,18 +29,20 @@ var nodeCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		GetNodeResource()
 	},
+	Args:    cobra.NoArgs,
+	Aliases: []string{"nodes", "no"},
 }
 
 // 定义一个结构体用于存储节点的资源信息
 type nodeInfo struct {
-	NodeName        string
-	CPUTotal        int64
-	CPUAllocated    int64
-	CPURemaining    int64
-	CPUPercentage   float64
-	MemoryTotal     int64
-	MemoryAllocated int64
-	MemoryRemaining int64
+	NodeName         string
+	CPUTotal         int64
+	CPUAllocated     int64
+	CPURemaining     int64
+	CPUPercentage    float64
+	MemoryTotal      int64
+	MemoryAllocated  int64
+	MemoryRemaining  int64
 	MemoryPercentage float64
 }
 
@@ -53,6 +53,7 @@ type nodeResource struct {
 }
 
 func GetNodeResource() {
+	defer cancel()
 	nodes, err := lib.GetK8sClient().CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	handlerError(err)
 
@@ -109,20 +110,20 @@ func GetNodeResource() {
 
 		// 添加节点信息到 nodeInfoList 切片中
 		nodeInfoList = append(nodeInfoList, nodeInfo{
-			NodeName:        nodeName,
-			CPUTotal:        cpuTotal,
-			CPUAllocated:    nodeResource.cpuRequest,
-			CPURemaining:    cpuRemaining,
-			CPUPercentage:   cpuPercentage,
-			MemoryTotal:     memoryTotal,
-			MemoryAllocated: nodeResource.memoryRequest,
-			MemoryRemaining: memoryRemaining,
+			NodeName:         nodeName,
+			CPUTotal:         cpuTotal,
+			CPUAllocated:     nodeResource.cpuRequest,
+			CPURemaining:     cpuRemaining,
+			CPUPercentage:    cpuPercentage,
+			MemoryTotal:      memoryTotal,
+			MemoryAllocated:  nodeResource.memoryRequest,
+			MemoryRemaining:  memoryRemaining,
 			MemoryPercentage: memoryPercentage,
 		})
 	}
 
 	// 根据用户传入的选项进行排序
-	switch sortBy {
+	switch nodeSortBy {
 	case "cpu":
 		sort.Slice(nodeInfoList, func(i, j int) bool {
 			return nodeInfoList[i].CPUPercentage < nodeInfoList[j].CPUPercentage
@@ -137,8 +138,8 @@ func GetNodeResource() {
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"节点名称","cpu总量(m)","cpu已分配(m)","cpu剩余值(m)","cpu剩余百分比","内存总量(MiB)","内存已分配(MiB)","内存剩余值(MiB)","内存剩余百分比"})
-	nodeResults := make([][]string,256)
+	table.SetHeader([]string{"节点名称", "cpu总量(m)", "cpu已分配(m)", "cpu剩余值(m)", "cpu剩余百分比", "内存总量(MiB)", "内存已分配(MiB)", "内存剩余值(MiB)", "内存剩余百分比"})
+	nodeResults := make([][]string, 256)
 
 	// 输出结果
 	for _, nodeInfo := range nodeInfoList {
@@ -155,14 +156,23 @@ func GetNodeResource() {
 			// fmt.Sprintf("%.2f%%",nodeInfo.MemoryPercentage),
 			colorize(nodeInfo.MemoryPercentage),
 		}
-		nodeResults = append(nodeResults,result)
+		nodeResults = append(nodeResults, result)
 	}
 
 	table.AppendBulk(nodeResults)
+	table.SetAutoWrapText(false)
+	table.SetAutoFormatHeaders(true)
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetCenterSeparator("")
+	table.SetColumnSeparator("")
+	table.SetRowSeparator("")
+	table.SetHeaderLine(false)
+	table.SetTablePadding("\t") // pad with tabs
+	table.SetNoWhiteSpace(true)
 	table.SetAlignment(tablewriter.ALIGN_CENTER)
 	table.Render()
 }
-
 
 // 获取节点已经分配的资源
 func calculatePodRequests(pod v1.Pod) (cpu, memory int64) {
@@ -183,7 +193,6 @@ func calculatePodRequests(pod v1.Pod) (cpu, memory int64) {
 
 	return cpu, memory
 }
-
 
 // 获取节点的可分配的CPU及内存信息
 func getNodeRequests(node v1.Node) (cpu, memory int64) {
