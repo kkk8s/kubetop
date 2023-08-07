@@ -22,6 +22,26 @@ import (
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 )
 
+var (
+	ctx               context.Context
+	cancel            context.CancelFunc
+	timeout           time.Duration
+	podResourcesMutex sync.Mutex
+	podMetricsMutex   sync.Mutex
+
+	daemonsetPod = []string{"calico-node", "kube-proxy", "nginx-proxy"}
+)
+
+var podCmd = &cobra.Command{
+	Use:   "pod",
+	Short: "Print the usage of pod in namespace",
+	Run: func(cmd *cobra.Command, args []string) {
+		PrintResult(ctx, namespace)
+	},
+	Args:    cobra.NoArgs,
+	Aliases: []string{"po", "pods"},
+}
+
 type ContainerResource struct {
 	Name        string
 	CPURequests int64
@@ -62,26 +82,6 @@ type PodInfo struct {
 	CPUUsageToLimitsRatio  float64
 	MemUsageToRequestRatio float64
 	MemUsageToLimitsRatio  float64
-}
-
-var (
-	ctx               context.Context
-	cancel            context.CancelFunc
-	timeout           time.Duration
-	podResourcesMutex sync.Mutex
-	podMetricsMutex   sync.Mutex
-
-	daemonsetPod = []string{"calico-node", "kube-proxy", "nginx-proxy"}
-)
-
-var podCmd = &cobra.Command{
-	Use:   "pod",
-	Short: "Print the usage of pod in namespace",
-	Run: func(cmd *cobra.Command, args []string) {
-		PrintResult(ctx, namespace)
-	},
-	Args:    cobra.NoArgs,
-	Aliases: []string{"po", "pods"},
 }
 
 func LoadK8sResource(ctx context.Context, namespace string) map[string]PodResource {

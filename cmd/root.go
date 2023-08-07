@@ -57,7 +57,7 @@ func init() {
 	podCmd.Flags().BoolVarP(&podSortByContainer, "container", "c", false, "Sort by container-level resources")
 
 	// 为nodeCmd添加--sort选项
-	nodeCmd.Flags().StringVar(&nodeSortBy, "sort-by", "cpu", "使用CPU或内存剩余率排序")
+	nodeCmd.Flags().StringVar(&nodeSortBy, "sort-by", "cpu.request", "使用CPU或内存剩余率排序")
 
 	timeout = time.Second * 5 // 全局超时时间
 	ctx, cancel = context.WithTimeout(context.Background(), timeout)
