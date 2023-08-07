@@ -123,7 +123,7 @@ func GetNodeResource() {
 	}
 
 	// 根据用户传入的选项进行排序
-	switch sortBy {
+	switch nodeSortBy {
 	case "cpu":
 		sort.Slice(nodeInfoList, func(i, j int) bool {
 			return nodeInfoList[i].CPUPercentage < nodeInfoList[j].CPUPercentage
@@ -160,6 +160,16 @@ func GetNodeResource() {
 	}
 
 	table.AppendBulk(nodeResults)
+	table.SetAutoWrapText(false)
+	table.SetAutoFormatHeaders(true)
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetCenterSeparator("")
+	table.SetColumnSeparator("")
+	table.SetRowSeparator("")
+	table.SetHeaderLine(false)
+	table.SetTablePadding("\t") // pad with tabs
+	table.SetNoWhiteSpace(true)
 	table.SetAlignment(tablewriter.ALIGN_CENTER)
 	table.Render()
 }
