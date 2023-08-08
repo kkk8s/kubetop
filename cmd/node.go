@@ -3,34 +3,32 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
-	"github.com/olekukonko/tablewriter"
+	"metrics.k8s.io/kube"
+
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"metrics.k8s.io/lib"
 )
-
-const Mebibyte = 1024 * 1024
 
 var (
 	// 互斥锁用于保证并发安全
 	mutex sync.Mutex
 	wg    sync.WaitGroup
 
-	watermark float64 = 20.0 // 内存及CPU阈值
+	watermark  float64 = 20.0 // 内存及CPU阈值
+	nodeHeader         = []string{"节点名称", "cpu|request剩余率", "cpu|实际使用率", "内存|request剩余率", "内存|实际使用率"}
 )
 
 var nodeCmd = &cobra.Command{
 	Use:   "node",
 	Short: "print the CPU/Mem remaining of nodes",
 	Run: func(cmd *cobra.Command, args []string) {
-		GetNodeResource(ctx)
+		GetNodeResource(rootCmd.Context())
 	},
 	Args:    cobra.NoArgs,
 	Aliases: []string{"nodes", "no"},
@@ -43,11 +41,11 @@ type nodeInfo struct {
 	CPUAllocated       int64
 	CPURemaining       int64
 	CPUPercentage      float64
-	NodeCPUUtilization string
+	NodeCPUUtilization string // 节点实际CPU使用率
 	MemoryTotal        int64
 	MemoryAllocated    int64
 	MemoryRemaining    int64
-	MemoryPercentage   float64
+	MemoryPercentage   float64 // 节点实际内存使用率
 	NodeMemUtilization string
 }
 
@@ -57,21 +55,27 @@ type nodeResource struct {
 	memoryRequest int64 // 节点总内存请求量
 }
 
+// 定义一个结构体用于存储节点的实际使用指标信息
 type nodeMetrics struct {
 	cpuPercentage string // 节点实际CPU用量
 	memPercentage string // 节点实际内存用量
 }
 
 func GetNodeResource(ctx context.Context) {
-	defer cancel()
-	nodes, err := lib.GetK8sClient().CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	handlerError(err)
+	nodes, err := kube.GetK8sClient().CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	kube.HandlerError(err, "列出节点失败")
 
-	pods, err := lib.GetK8sClient().CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	handlerError(err)
+	pods, err := kube.GetK8sClient().CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	kube.HandlerError(err, "列出所有Pod失败")
 
 	// 创建一个用于存储节点资源信息的映射，键为节点名称，值为节点资源信息
 	nodeResources := make(map[string]nodeResource, 0)
+
+	// 定义map存储节点名到v1.Node的映射
+	nodeMap := make(map[string]v1.Node, 0)
+	for _, node := range nodes.Items {
+		nodeMap[node.Name] = node
+	}
 
 	// 使用 WaitGroup 来同步并发任务
 	wg.Add(len(pods.Items))
@@ -97,9 +101,8 @@ func GetNodeResource(ctx context.Context) {
 	// 等待所有 Goroutine 完成
 	wg.Wait()
 
-	nodesMetrics := getNodeUtilization(ctx)
+	nodesMetrics := getNodeUtilization(ctx, nodeMap)
 
-	// 遍历所有节点，输出节点的资源信息
 	// 遍历所有节点，计算节点的总资源和剩余资源，并输出结果
 	var nodeInfoList []nodeInfo
 	for _, node := range nodes.Items {
@@ -108,28 +111,27 @@ func GetNodeResource(ctx context.Context) {
 		nodeMetrics := nodesMetrics[nodeName]
 
 		// 获取节点的可分配资源信息
-		cpuTotal, memoryTotal := getNodeRequests(node)
+		cpuTotal, memoryTotal := getNodeAllocatable(node)
 
 		// 计算节点的剩余资源
-		cpuRemaining := calculateRemainingResource(cpuTotal, nodeResource.cpuRequest)
-		memoryRemaining := calculateRemainingResource(memoryTotal, nodeResource.memoryRequest)
+		cpuRemaining := calculateRemaining(cpuTotal, nodeResource.cpuRequest)
+		memoryRemaining := calculateRemaining(memoryTotal, nodeResource.memoryRequest)
 
 		// 计算资源百分比
-		// cpuTotal := cpuRequest.MilliValue()
 		cpuPercentage := calculateRemaingPercentage(cpuRemaining, cpuTotal)
 		memoryPercentage := calculateRemaingPercentage(memoryRemaining, memoryTotal)
 
 		// 添加节点信息到 nodeInfoList 切片中
 		nodeInfoList = append(nodeInfoList, nodeInfo{
-			NodeName:           nodeName,
-			CPUTotal:           cpuTotal,
-			CPUAllocated:       nodeResource.cpuRequest,
-			CPURemaining:       cpuRemaining,
+			NodeName: nodeName,
+			// CPUTotal:           cpuTotal,
+			// CPUAllocated:       nodeResource.cpuRequest,
+			// CPURemaining:       cpuRemaining,
 			CPUPercentage:      cpuPercentage,
 			NodeCPUUtilization: nodeMetrics.cpuPercentage,
-			MemoryTotal:        memoryTotal,
-			MemoryAllocated:    nodeResource.memoryRequest,
-			MemoryRemaining:    memoryRemaining,
+			// MemoryTotal:        memoryTotal,
+			// MemoryAllocated:    nodeResource.memoryRequest,
+			// MemoryRemaining:    memoryRemaining,
 			MemoryPercentage:   memoryPercentage,
 			NodeMemUtilization: nodeMetrics.memPercentage,
 		})
@@ -143,7 +145,13 @@ func GetNodeResource(ctx context.Context) {
 		})
 	case "cpu.util":
 		sort.Slice(nodeInfoList, func(i, j int) bool {
-			return nodeInfoList[i].NodeCPUUtilization > nodeInfoList[j].NodeCPUUtilization
+			cpuUtilI, err := strconv.ParseFloat(strings.TrimSuffix(nodeInfoList[i].NodeCPUUtilization, "%"), 64)
+			kube.HandlerError(err, "cpu使用率转换失败")
+
+			cpuUtilJ, err := strconv.ParseFloat(strings.TrimSuffix(nodeInfoList[j].NodeCPUUtilization, "%"), 64)
+			kube.HandlerError(err, "cpu使用率转换失败")
+
+			return cpuUtilI > cpuUtilJ
 		})
 	case "mem.request":
 		sort.Slice(nodeInfoList, func(i, j int) bool {
@@ -151,47 +159,41 @@ func GetNodeResource(ctx context.Context) {
 		})
 	case "mem.util":
 		sort.Slice(nodeInfoList, func(i, j int) bool {
-			return nodeInfoList[i].NodeMemUtilization > nodeInfoList[j].NodeMemUtilization
+			cpuUtilI, err := strconv.ParseFloat(strings.TrimSuffix(nodeInfoList[i].NodeMemUtilization, "%"), 64)
+			kube.HandlerError(err, "内存使用率转换失败")
+
+			cpuUtilJ, err := strconv.ParseFloat(strings.TrimSuffix(nodeInfoList[j].NodeMemUtilization, "%"), 64)
+			kube.HandlerError(err, "内存使用率转换失败")
+			return cpuUtilI > cpuUtilJ
 		})
 	default:
 		fmt.Println("未知的排序选项")
 		return
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"节点名称", "cpu总量(m)", "cpu已分配(m)", "cpu剩余值(m)", "cpu剩余百分比", "cpu实际使用", "内存总量(MiB)", "内存已分配(MiB)", "内存剩余值(MiB)", "内存剩余百分比", "内存实际使用"})
 	nodeResults := make([][]string, 0)
-
 	// 输出结果
 	for _, nodeInfo := range nodeInfoList {
 		result := []string{
 			nodeInfo.NodeName,
-			strconv.FormatInt(nodeInfo.CPUTotal, 10),
-			strconv.FormatInt(nodeInfo.CPUAllocated, 10),
-			strconv.FormatInt(nodeInfo.CPURemaining, 10),
+			// strconv.FormatInt(nodeInfo.CPUTotal, 10),
+			// strconv.FormatInt(nodeInfo.CPUAllocated, 10),
+			// strconv.FormatInt(nodeInfo.CPURemaining, 10),
 			colorize(nodeInfo.CPUPercentage),
 			nodeInfo.NodeCPUUtilization,
-			strconv.FormatInt(nodeInfo.MemoryTotal, 10),
-			strconv.FormatInt(nodeInfo.MemoryAllocated, 10),
-			strconv.FormatInt(nodeInfo.MemoryRemaining, 10),
+			// strconv.FormatInt(nodeInfo.MemoryTotal, 10),
+			// strconv.FormatInt(nodeInfo.MemoryAllocated, 10),
+			// strconv.FormatInt(nodeInfo.MemoryRemaining, 10),
 			colorize(nodeInfo.MemoryPercentage),
 			nodeInfo.NodeMemUtilization,
 		}
 		nodeResults = append(nodeResults, result)
 	}
 
+	table := kube.NewTable()
+	// table.SetHeader([]string{"节点名称", "cpu总量(m)", "cpu已分配(m)", "cpu剩余值(m)", "cpu剩余百分比", "cpu实际使用", "内存总量(MiB)", "内存已分配(MiB)", "内存剩余值(MiB)", "内存剩余百分比", "内存实际使用"})
+	table.SetHeader(nodeHeader)
 	table.AppendBulk(nodeResults)
-	table.SetAutoWrapText(false)
-	table.SetAutoFormatHeaders(true)
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetCenterSeparator("")
-	table.SetColumnSeparator("")
-	table.SetRowSeparator("")
-	table.SetHeaderLine(false)
-	table.SetTablePadding("\t") // pad with tabs
-	table.SetNoWhiteSpace(true)
-	table.SetAlignment(tablewriter.ALIGN_CENTER)
 	table.Render()
 }
 
@@ -215,16 +217,24 @@ func calculatePodRequests(pod v1.Pod) (cpu, memory int64) {
 	return cpu, memory
 }
 
-// 获取节点的可分配的CPU及内存信息
-func getNodeRequests(node v1.Node) (cpu, memory int64) {
+// 获取节点的可分配的CPU及内存
+func getNodeAllocatable(node v1.Node) (cpu, memory int64) {
+	cpuRequest := node.Status.Allocatable[v1.ResourceCPU]       // cpu 可分配值
+	memoryRequest := node.Status.Allocatable[v1.ResourceMemory] // 内存 可分配值
+
+	return cpuRequest.MilliValue(), memoryRequest.Value() / Mebibyte // 将字节转换为 MB
+}
+
+// 获取节点的最大的CPU及内存
+func getNodeCapacity(node v1.Node) (cpu, memory int64) {
 	cpuRequest := node.Status.Capacity[v1.ResourceCPU]       // cpu 可分配值
 	memoryRequest := node.Status.Capacity[v1.ResourceMemory] // 内存 可分配值
 
-	return cpuRequest.MilliValue(), memoryRequest.Value() / Mebibyte // 将字节转换为 MiB
+	return cpuRequest.MilliValue(), memoryRequest.Value() / Mebibyte // 将字节转换为 MB
 }
 
 // 计算剩余资源值
-func calculateRemainingResource(request, allocated int64) int64 {
+func calculateRemaining(request, allocated int64) int64 {
 	remaining := request - allocated
 	if remaining < 0 {
 		return 0
@@ -233,21 +243,23 @@ func calculateRemainingResource(request, allocated int64) int64 {
 }
 
 // 返回节点实际资源使用率
-// metricsAPI中无法取得节点的最大资源值
-func getNodeUtilization(ctx context.Context) map[string]nodeMetrics {
-	nodeMetricsList, err := lib.GetMetricsClient().MetricsV1beta1().NodeMetricses().List(ctx, metav1.ListOptions{})
-	handlerError(err)
+func getNodeUtilization(ctx context.Context, nodeMap map[string]v1.Node) map[string]nodeMetrics {
+	nodeMetricsList, err := kube.GetMetricsClient().MetricsV1beta1().NodeMetricses().List(ctx, metav1.ListOptions{})
+	kube.HandlerError(err, "列出所有节点metrics指标失败")
 
 	// 定义映射来存储每个节点的资源使用百分比
 	nodeMetricsMap := make(map[string]nodeMetrics)
 
 	for _, nm := range nodeMetricsList.Items {
 		nodeName := nm.Name
-		cpuUsage := nm.Usage.Cpu().MilliValue()    // 将毫核转换为核
-		memUsage := nm.Usage.Memory().Value() / Mebibyte // 将字节转换为 MiB
+		cpuUsage := nm.Usage.Cpu().MilliValue()          // 将毫核转换为核
+		memUsage := nm.Usage.Memory().Value() / Mebibyte // 将字节转换为 MB
+
+		// 从映射中获取节点信息
+		node := nodeMap[nodeName]
 
 		// 获取节点的可分配资源
-		cpuTotal, memTotal := getNodeRequests(getNodeByName(nodeName))
+		cpuTotal, memTotal := getNodeCapacity(node)
 		cpuPercentage := calculateRemaingPercentage(cpuUsage, cpuTotal)
 		memPercentage := calculateRemaingPercentage(memUsage, memTotal)
 
@@ -260,11 +272,6 @@ func getNodeUtilization(ctx context.Context) map[string]nodeMetrics {
 	return nodeMetricsMap
 }
 
-func getNodeByName(nodeName string) v1.Node {
-	node, _ := lib.GetK8sClient().CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-	return *node
-}
-
 func calculateRemaingPercentage(remain, total int64) float64 {
 	return float64(remain) / float64(total) * 100
 }
@@ -274,10 +281,4 @@ func colorize(percentage float64) string {
 		return fmt.Sprintf("\x1b[31m%.2f%%\x1b[0m", percentage)
 	}
 	return fmt.Sprintf("%.2f%%", percentage)
-}
-
-func handlerError(err error) {
-	if err != nil {
-		log.Fatalln(err.Error())
-	}
 }

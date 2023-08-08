@@ -4,18 +4,15 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"os"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
-	"metrics.k8s.io/lib"
+	"metrics.k8s.io/kube"
 
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,20 +20,19 @@ import (
 )
 
 var (
-	ctx               context.Context
-	cancel            context.CancelFunc
-	timeout           time.Duration
 	podResourcesMutex sync.Mutex
 	podMetricsMutex   sync.Mutex
 
-	daemonsetPod = []string{"calico-node", "kube-proxy", "nginx-proxy"}
+	daemonsetPod    = []string{"calico-node", "kube-proxy", "nginx-proxy"}
+	podHeader       = []string{"节点名称", "pod名称", "cpu request|limit|usage", "cpu用量/request占比", "cpu用量/limit占比", "内存 request|limit|usage", "内存用量/request占比", "内存用量/limit占比"}
+	containerHeader = []string{"运行节点", "pod名称", "容器名称", "cpu request|limit|usage", "cpu用量/request占比", "cpu用量/limit占比", "内存 request|limit|usage", "内存用量/request占比", "内存用量/limit占比"}
 )
 
 var podCmd = &cobra.Command{
 	Use:   "pod",
 	Short: "Print the usage of pod in namespace",
 	Run: func(cmd *cobra.Command, args []string) {
-		PrintResult(ctx, namespace)
+		PrintResult(rootCmd.Context(), namespace)
 	},
 	Args:    cobra.NoArgs,
 	Aliases: []string{"po", "pods"},
@@ -86,9 +82,11 @@ type PodInfo struct {
 
 func LoadK8sResource(ctx context.Context, namespace string) map[string]PodResource {
 	PodResources := make(map[string]PodResource, 0)
-	podList, err := lib.GetK8sClient().CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{ResourceVersion: "0"})
-	if err != nil {
-		log.Fatalf("Failed to list pods from the namespace %s, error: %s\n", namespace, err.Error())
+	podList, err := kube.GetK8sClient().CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{ResourceVersion: "0"})
+	kube.HandlerError(err, fmt.Sprintf("列出命名空间 %s 下的Pod失败", namespace))
+
+	if len(podList.Items) == 0 {
+		kube.HandlerError(fmt.Errorf("命名空间 %s 下无pod", namespace), "请重新指定命名空间")
 	}
 
 	var wg sync.WaitGroup
@@ -107,8 +105,8 @@ func LoadK8sResource(ctx context.Context, namespace string) map[string]PodResour
 					Name:        container.Name,
 					CPURequests: container.Resources.Requests.Cpu().MilliValue(),
 					CPULimits:   container.Resources.Limits.Cpu().MilliValue(),
-					MemRequest:  container.Resources.Requests.Memory().Value() / 1024 / 1024,
-					MemLimits:   container.Resources.Limits.Memory().Value() / 1024 / 1024,
+					MemRequest:  container.Resources.Requests.Memory().Value(),
+					MemLimits:   container.Resources.Limits.Memory().Value(),
 				}
 				containersResource[container.Name] = containerResource
 			}
@@ -131,10 +129,8 @@ func LoadK8sResource(ctx context.Context, namespace string) map[string]PodResour
 
 func LoadK8sMetrics(ctx context.Context, namespace string) map[string]PodMetrics {
 	PodsMetrics := make(map[string]PodMetrics, 0)
-	PodMetricsList, err := lib.GetMetricsClient().MetricsV1beta1().PodMetricses(namespace).List(ctx, metav1.ListOptions{ResourceVersion: "0"})
-	if err != nil {
-		log.Fatalf("Failed to get metrics from namespace %s, make sure metrics-server is deployed", namespace)
-	}
+	PodMetricsList, err := kube.GetMetricsClient().MetricsV1beta1().PodMetricses(namespace).List(ctx, metav1.ListOptions{ResourceVersion: "0"})
+	kube.HandlerError(err, fmt.Sprintf("获取命名空间 %s 下pod的指标失败", namespace))
 
 	var wg sync.WaitGroup
 	wg.Add(len(PodMetricsList.Items))
@@ -150,7 +146,7 @@ func LoadK8sMetrics(ctx context.Context, namespace string) map[string]PodMetrics
 				containerMetricInfo := &ContainerMetric{
 					Name:     containerMetric.Name,
 					CPUUsage: containerMetric.Usage.Cpu().MilliValue(),
-					MemUsage: containerMetric.Usage.Memory().Value() / 1024 / 1024,
+					MemUsage: containerMetric.Usage.Memory().Value(),
 				}
 				podContainerMetrics[containerMetric.Name] = containerMetricInfo
 			}
@@ -220,8 +216,7 @@ func CombinePodInfo(resources map[string]PodResource, metrics map[string]PodMetr
 }
 
 func PrintResult(ctx context.Context, namespace string) {
-	defer cancel()
-	if !Validate(namespace) {
+	if !Validate(ctx, namespace) {
 		fmt.Println("指定的命名空间不存在")
 		os.Exit(1)
 	}
@@ -231,53 +226,107 @@ func PrintResult(ctx context.Context, namespace string) {
 	combinedPodInfoList := SortPodInfo(CombinePodInfo(resources, metrics))
 
 	podResults := make([][]string, 0)
-	// 输出结果
 	for _, podInfo := range combinedPodInfoList {
 		if podSortByContainer {
 			// 输出容器级别的信息
-			for _, container := range podInfo.PodResource.Containers {
-				containerRatio := podInfo.ContainersRatio[container.Name]
+			for containerName, containerResource := range podInfo.PodResource.Containers {
+				containerMetric := podInfo.PodMetrics.Containers[containerName]
+				containerRatio := podInfo.ContainersRatio[containerName]
+				cpuUsage := formatResourceUsage(containerResource.CPURequests, containerResource.CPULimits, containerMetric.CPUUsage, "CPU")
+				memUsage := formatResourceUsage(containerResource.MemRequest, containerResource.MemLimits, containerMetric.MemUsage, "Memory")
 				result := []string{
 					podInfo.NodeName,
 					podInfo.PodResource.PodName,
-					container.Name,
+					containerName,
+					cpuUsage,
 					formatValue(containerRatio.CPUUsageToRequestRatio),
-					formatValue(containerRatio.MemUsageToRequestRatio),
 					formatValue(containerRatio.CPUUsageToLimitsRatio),
+					memUsage,
+					formatValue(containerRatio.MemUsageToRequestRatio),
 					formatValue(containerRatio.MemUsageToLimitsRatio),
 				}
 				podResults = append(podResults, result)
 			}
 		} else {
 			// 输出Pod级别的信息
+			totalCPURequests, totalCPULimits, totalMemRequests, totalMemLimits := int64(0), int64(0), int64(0), int64(0)
+			totalCPUUsage, totalMemUsage := int64(0), int64(0)
+			for _, containerResource := range podInfo.PodResource.Containers {
+				totalCPURequests += containerResource.CPURequests
+				totalCPULimits += containerResource.CPULimits
+				totalMemRequests += containerResource.MemRequest
+				totalMemLimits += containerResource.MemLimits
+			}
+			for _, containerMetric := range podInfo.PodMetrics.Containers {
+				totalCPUUsage += containerMetric.CPUUsage
+				totalMemUsage += containerMetric.MemUsage
+			}
+			cpuUsage := formatResourceUsage(totalCPURequests, totalCPULimits, totalCPUUsage, "CPU")
+			memUsage := formatResourceUsage(totalMemRequests, totalMemLimits, totalMemUsage, "Memory")
 			result := []string{
 				podInfo.NodeName,
 				podInfo.PodResource.PodName,
+				cpuUsage,
 				formatValue(podInfo.CPUUsageToRequestRatio),
-				formatValue(podInfo.MemUsageToRequestRatio),
 				formatValue(podInfo.CPUUsageToLimitsRatio),
+				memUsage,
+				formatValue(podInfo.MemUsageToRequestRatio),
 				formatValue(podInfo.MemUsageToLimitsRatio),
 			}
 			podResults = append(podResults, result)
 		}
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
+	table := kube.NewTable()
 	if podSortByContainer {
-		table.SetHeader([]string{"运行节点", "pod名称", "容器名称", "cpu用量/request占比", "内存用量/request占比", "cpu用量/limit占比", "内存用量/limit占比"})
+		table.SetHeader(containerHeader)
 	} else {
-		table.SetHeader([]string{"运行节点", "pod名称", "cpu用量/request占比", "内存用量/request占比", "cpu用量/limit占比", "内存用量/limit占比"})
+		table.SetHeader(podHeader)
 	}
 	table.AppendBulk(podResults)
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetCenterSeparator("")
-	table.SetColumnSeparator("")
-	table.SetRowSeparator("")
-	table.SetHeaderLine(false)
-	table.SetTablePadding("\t") // pad with space
-	table.SetNoWhiteSpace(true)
 	table.Render()
+}
+
+func formatResourceUsage(request, limit, usage int64, resourceType string) string {
+	// Convert the values to the desired units
+	requestInUnits := convertToUnits(request, resourceType)
+	limitInUnits := convertToUnits(limit, resourceType)
+	usageInUnits := convertToUnits(usage, resourceType)
+
+	return fmt.Sprintf("%s|%s|%s", requestInUnits, limitInUnits, usageInUnits)
+}
+
+func convertToUnits(value int64, resourceType string) string {
+	// Implement your unit conversion logic here
+	switch resourceType {
+	case "CPU":
+		// Convert milliCPU to CPU
+		if value == 0 {
+			return "-"
+		} else if value < 1000 {
+			return fmt.Sprintf("%dm", value)
+		} else {
+			cpu := value / 1000
+			milliCPU := value % 1000
+			if milliCPU == 0 {
+				return fmt.Sprintf("%dC", cpu)
+			} else {
+				return fmt.Sprintf("%dC%dm", cpu, milliCPU)
+			}
+		}
+	case "Memory":
+		// Convert bytes to kilobytes
+		if value == 0 {
+			return "-"
+		} else if value >= Gibibyte {
+			return fmt.Sprintf("%dG", value / Gibibyte)
+		} else {
+			return fmt.Sprintf("%dM", value / Mebibyte)
+		}
+	default:
+		// If the resource type is unknown, return the raw value
+		return fmt.Sprintf("%d", value)
+	}
 }
 
 func encode(ns, pod string) string {
@@ -386,12 +435,9 @@ func formatValue(val interface{}) string {
 }
 
 // 判断是否存在指定的namespace
-func Validate(namespace string) bool {
-	namespaces, err := lib.GetK8sClient().CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		log.Fatalln("Error listing namespaces:", err.Error())
-		os.Exit(1)
-	}
+func Validate(ctx context.Context, namespace string) bool {
+	namespaces, err := kube.GetK8sClient().CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	kube.HandlerError(err, "列出命名空间失败")
 
 	for _, ns := range namespaces.Items {
 		if ns.Name == namespace {

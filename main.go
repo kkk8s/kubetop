@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"metrics.k8s.io/cmd"
-	_ "metrics.k8s.io/lib"
+	_ "metrics.k8s.io/kube"
 )
 
 func main() {
