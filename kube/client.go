@@ -14,15 +14,15 @@ var (
 func init() {
 	//生成config配置
 	config, err := clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
-	HandlerError(err, "构建kubeconfig配置文件失败")
+	Error(err, "构建kubeconfig配置文件失败")
 
 	//metrics-client
 	metricsClient, err = metrics.NewForConfig(config)
-	HandlerError(err,"构建metrics客户端失败")
+	Error(err,"构建metrics客户端失败")
 
 	//common-client
 	k8sClient, err = kubernetes.NewForConfig(config)
-	HandlerError(err,"构建rest客户端失败")
+	Error(err,"构建rest客户端失败")
 }
 
 func GetK8sClient() *kubernetes.Clientset {

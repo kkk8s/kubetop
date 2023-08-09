@@ -63,10 +63,10 @@ type nodeMetrics struct {
 
 func GetNodeResource(ctx context.Context) {
 	nodes, err := kube.GetK8sClient().CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	kube.HandlerError(err, "列出节点失败")
+	kube.Error(err, "列出节点失败")
 
 	pods, err := kube.GetK8sClient().CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	kube.HandlerError(err, "列出所有Pod失败")
+	kube.Error(err, "列出所有Pod失败")
 
 	// 创建一个用于存储节点资源信息的映射，键为节点名称，值为节点资源信息
 	nodeResources := make(map[string]nodeResource, 0)
@@ -121,6 +121,10 @@ func GetNodeResource(ctx context.Context) {
 		cpuPercentage := calculateRemaingPercentage(cpuRemaining, cpuTotal)
 		memoryPercentage := calculateRemaingPercentage(memoryRemaining, memoryTotal)
 
+		if nodeMetrics.cpuPercentage == "" || nodeMetrics.memPercentage == ""  {
+			continue
+		}
+
 		// 添加节点信息到 nodeInfoList 切片中
 		nodeInfoList = append(nodeInfoList, nodeInfo{
 			NodeName: nodeName,
@@ -146,10 +150,10 @@ func GetNodeResource(ctx context.Context) {
 	case "cpu.util":
 		sort.Slice(nodeInfoList, func(i, j int) bool {
 			cpuUtilI, err := strconv.ParseFloat(strings.TrimSuffix(nodeInfoList[i].NodeCPUUtilization, "%"), 64)
-			kube.HandlerError(err, "cpu使用率转换失败")
+			kube.Error(err, "cpu使用率转换失败")
 
 			cpuUtilJ, err := strconv.ParseFloat(strings.TrimSuffix(nodeInfoList[j].NodeCPUUtilization, "%"), 64)
-			kube.HandlerError(err, "cpu使用率转换失败")
+			kube.Error(err, "cpu使用率转换失败")
 
 			return cpuUtilI > cpuUtilJ
 		})
@@ -159,12 +163,12 @@ func GetNodeResource(ctx context.Context) {
 		})
 	case "mem.util":
 		sort.Slice(nodeInfoList, func(i, j int) bool {
-			cpuUtilI, err := strconv.ParseFloat(strings.TrimSuffix(nodeInfoList[i].NodeMemUtilization, "%"), 64)
-			kube.HandlerError(err, "内存使用率转换失败")
+			memUtilI, err := strconv.ParseFloat(strings.TrimSuffix(nodeInfoList[i].NodeMemUtilization, "%"), 64)
+			kube.Error(err, "内存使用率转换失败")
 
-			cpuUtilJ, err := strconv.ParseFloat(strings.TrimSuffix(nodeInfoList[j].NodeMemUtilization, "%"), 64)
-			kube.HandlerError(err, "内存使用率转换失败")
-			return cpuUtilI > cpuUtilJ
+			memUtilJ, err := strconv.ParseFloat(strings.TrimSuffix(nodeInfoList[j].NodeMemUtilization, "%"), 64)
+			kube.Error(err, "内存使用率转换失败")
+			return memUtilI > memUtilJ
 		})
 	default:
 		fmt.Println("未知的排序选项")
@@ -245,7 +249,7 @@ func calculateRemaining(request, allocated int64) int64 {
 // 返回节点实际资源使用率
 func getNodeUtilization(ctx context.Context, nodeMap map[string]v1.Node) map[string]nodeMetrics {
 	nodeMetricsList, err := kube.GetMetricsClient().MetricsV1beta1().NodeMetricses().List(ctx, metav1.ListOptions{})
-	kube.HandlerError(err, "列出所有节点metrics指标失败")
+	kube.Error(err, "列出所有节点metrics指标失败")
 
 	// 定义映射来存储每个节点的资源使用百分比
 	nodeMetricsMap := make(map[string]nodeMetrics)

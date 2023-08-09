@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"metrics.k8s.io/kube"
+
 	"github.com/spf13/cobra"
 )
 
@@ -31,10 +33,12 @@ var (
 	# 5. pod排序规则包括cpu.request、mem.request、cpu.limit、mem.limit
 	     node排序规则包括cpu.request、mem.request、cpu.util、mem.util
 	`
-	namespace string
-	podSortBy string
-	nodeSortBy string
+	namespace          string
+	podSortBy          string
+	nodeSortBy         string
 	podSortByContainer bool
+
+	NamespacesList []string
 )
 
 const (
@@ -45,12 +49,12 @@ const (
 
 var rootCmd = &cobra.Command{
 	// DisableFlagParsing: false,
-	Short:              "k8s资源查看工具",
-	Long:               kubetopLong,
-	Example:            kubetopExample,
-	DisableAutoGenTag: true,
+	Short:                 "k8s资源查看工具",
+	Long:                  kubetopLong,
+	Example:               kubetopExample,
+	DisableAutoGenTag:     true,
 	DisableFlagsInUseLine: true,
-	Use: "kubetop pod -n [namespace]|node --sort-by=cpu.request",
+	Use:                   "kubetop pod -n [namespace]|node --sort-by=cpu.request",
 }
 
 func init() {
@@ -63,6 +67,8 @@ func init() {
 		Hidden: true,
 	})
 
+	rootCmd.PersistentFlags().StringP("loglevel", "v", "warning", "设置日志级别")
+
 	// 为 podCmd 添加 -n 或 --namespace 选项
 	podCmd.Flags().StringVarP(&namespace, "namespace", "n", "", "指定查询的命名空间")
 	podCmd.MarkFlagRequired("namespace")
@@ -71,7 +77,6 @@ func init() {
 
 	// 为nodeCmd添加--sort选项
 	nodeCmd.Flags().StringVar(&nodeSortBy, "sort-by", "cpu.request", "按cpu.request | cpu.util | mem.request | mem.util排序")
-
 }
 
 func Execute() error {
@@ -79,7 +84,22 @@ func Execute() error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	rootCmd.SetContext(ctx)
+	loglevel, _ := rootCmd.Flags().GetString("loglevel")
+	switch loglevel {
+	case "info":
+		kube.SetLogLevel(kube.INFO)
+	case "warning":
+		kube.SetLogLevel(kube.WARNING)
+	case "error":
+		kube.SetLogLevel(kube.ERROR)
+	default:
+		kube.SetLogLevel(kube.INFO)
+	}
 
-	return rootCmd.Execute()
+	NamespacesList = ListNamespace(ctx)
+	podCmd.RegisterFlagCompletionFunc("namespace", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return NamespacesList, cobra.ShellCompDirectiveDefault
+	})
+
+	return rootCmd.ExecuteContext(ctx)
 }
