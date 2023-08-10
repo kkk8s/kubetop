@@ -122,6 +122,7 @@ func GetNodeResource(ctx context.Context) {
 		memoryPercentage := calculateRemaingPercentage(memoryRemaining, memoryTotal)
 
 		if nodeMetrics.cpuPercentage == "" || nodeMetrics.memPercentage == ""  {
+			kube.Info((fmt.Errorf("节点%s资源异常",nodeName)),"跳过该节点,")
 			continue
 		}
 

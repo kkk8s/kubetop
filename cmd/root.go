@@ -32,7 +32,12 @@ var (
 
 	# 5. pod排序规则包括cpu.request、mem.request、cpu.limit、mem.limit
 	     node排序规则包括cpu.request、mem.request、cpu.util、mem.util
+	
+	# 6. 命令行补齐:
+	source <(kubetop completion zsh)
+	加入到$HOME/.bashrc或者/etc/profile永久生效
 	`
+	
 	namespace          string
 	podSortBy          string
 	nodeSortBy         string

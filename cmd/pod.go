@@ -23,7 +23,7 @@ var (
 	podResourcesMutex sync.Mutex
 	podMetricsMutex   sync.Mutex
 
-	daemonsetPod    = []string{"calico-node", "kube-proxy", "nginx-proxy"}
+	daemonsetPod    = []string{"nodelocaldns","calico-node", "kube-proxy", "nginx-proxy","docc-agent","promtail","csi-rbdplugin","huawei-csi-node","node-exporter","clearlog","filebeat-business"}
 	podHeader       = []string{"节点名称", "pod名称", "cpu request|limit|usage", "cpu用量/request占比", "cpu用量/limit占比", "内存 request|limit|usage", "内存用量/request占比", "内存用量/limit占比"}
 	containerHeader = []string{"运行节点", "pod名称", "容器名称", "cpu request|limit|usage", "cpu用量/request占比", "cpu用量/limit占比", "内存 request|limit|usage", "内存用量/request占比", "内存用量/limit占比"}
 )

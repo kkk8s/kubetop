@@ -26,6 +26,8 @@ func init() {
 func Info(err error, msg string) {
 	if err != nil {
 		klog.InfoDepth(1, msg, err)
+	} else {
+		klog.InfoDepth(1, msg)
 	}
 }
 
